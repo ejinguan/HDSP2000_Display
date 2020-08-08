@@ -40,6 +40,7 @@ volatile int  display_curr_char = 0;        // Current character displayed on th
 volatile int  display_curr_column = 0;      // Current column flashed out, 0-4
 volatile unsigned long display_scroll_speed = 200;  // Millis to scroll the display
 volatile unsigned long display_last_scroll = 0; // last millis() scrolled.
+volatile bool display_scroll_complete = false;
 
 // This is where the information on each character is
 // character s can be adjusted by changing the HEX codes
@@ -215,15 +216,8 @@ void setup() {
   pinMode(clock_pin, OUTPUT);
   digitalWrite(data_pin, LOW);
   digitalWrite(clock_pin, HIGH);
-  
-  unsigned long tmp = millis();
-  Serial.println(tmp);
 
   SetupTimer();
-  
-  tmp = millis();
-  Serial.println(tmp);
-
 }
 
 void SetupTimer()
@@ -253,50 +247,20 @@ void SetupTimer()
 void loop() {
   //ShowWordForMillis('1', '2', '3', '4', '5', '6', '7', '8', 2000);
 
-  unsigned long tmp = millis();
-  Serial.println(tmp);
+  //unsigned long tmp = millis();
+  //Serial.println(tmp);
+
+  if (Serial.available()) {
+    ShowTextFor(Serial.readString(), 10000);
+  }
   
-  ShowWordInterrupt("How are you?");
-  delay(5000);
-  Serial.println(display_last_scroll);
-  Serial.println(display_curr_column);
+  ShowTextFor("How are you?", 5000);
+  // delay(5000);
   
-  ShowWordInterrupt("Hello");
-  delay(2000);
-  Serial.println(display_last_scroll);
-  Serial.println(display_curr_column);
+  ShowTextFor("Hello", 2000);
+  // delay(2000);
 }
 
-/*
-void writeText(String text, int speed, int brightness) {
-  int text_length = text.length();
-  int text_data[text_length * 5];
-  char text_data_[text_length];
-  
-  for (int vv = 0; vv < text_length; vv++) {
-    char tt = text.charAt(vv);
-    for (int i = 0; i < 5; i++) {
-      text_data[vv * 5 + i] = ascii_5x7[tt * 5 + i];
-    }
-  }
-  for (int asc = 4; asc < text_length; asc++) { // all available ASCII
-    for (int tijd = 0; tijd < speed; tijd++) { // ‘speed’-times same display, less is faster
-      for (int i = 0; i < 5; i++) { // 5 columns
-        int duur = 0;
-        for (int j = 0; j < 28; j++) { // 4 × 7 row-elements
-          digitalWrite(clock_pin, HIGH);
-          digitalWrite(data, text_data[(-(j / 7)*asc) * 5 * i] & (2 << (j % 7))); // translate
-          digitalWrite(clock_pin, LOW);
-        }
-        digitalWrite(column[i], HIGH);
-        delayMicroseconds(brightness);
-        digitalWrite(column[i], LOW);
-      }
-    }
-
-  }
-}
-*/
 void ShowWordForMillis(char c8, char c7, char c6, char c5, char c4, char c3, char c2, char c1, unsigned long mil) {
   unsigned long end_time;
   end_time = millis() + mil;
@@ -380,7 +344,7 @@ byte getColumnByte(char c, int k)
   return chardata;
 }
 
-void ShowWordInterrupt(String tmpString) {
+void ShowTextInterrupt(String tmpString) {
   // Set to the smaller of input string or buffer size
   display_length = min(tmpString.length(), MAX_CHARS);
 
@@ -391,6 +355,24 @@ void ShowWordInterrupt(String tmpString) {
   display_curr_char = 0;
   display_curr_column = 0;
   display_last_scroll = millis();
+}
+
+void ShowTextFor(String tmpString, unsigned long duration) {
+  ShowTextInterrupt(tmpString);
+
+  delay(duration);
+
+  // Wait until the scrolling is complete.
+  while (!IsDisplayScrollComplete()) {}
+}
+
+bool IsDisplayScrollComplete() {
+  if (display_length < DISPLAY_CHARS) {
+    return true;
+  } else {
+    // Check if until it has completed scrolling
+    return display_scroll_complete;
+  }
 }
 
 
@@ -409,11 +391,15 @@ void RefreshDisplay() {
   // Check if we need to scroll by 1 character
   if ((millis() - display_last_scroll) > display_scroll_speed) {
     display_curr_char = display_curr_char+1;
+    // Flag as not complete
+    display_scroll_complete = false;
 
     // Last character has scrolled off screen
     if (display_curr_char >= display_length) {
       // Wraparound to allow text to scroll in from the right
       display_curr_char = -DISPLAY_CHARS;
+      // Flag as complete, allow for next text
+      display_scroll_complete = true;
     }
     
     display_last_scroll = millis();
