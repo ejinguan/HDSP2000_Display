@@ -15,6 +15,15 @@ struct CharMap
 };
 const int cmap_len = 95;
 
+#define DISPLAY_CHARS 8
+
+volatile char display_chars[16];            // The current character buffer to display
+volatile int  display_length = 0;           // The length of the character string
+volatile int  display_curr_char = 0;        // Current character displayed on the left
+volatile int  display_curr_column = 0;      // Current column flashed out, 0-4
+volatile unsigned long display_scroll_speed = 100;  // Millis to scroll the display
+volatile unsigned long display_last_scroll = 0; // last millis() scrolled.
+
 // This is where the information on each character is
 // character s can be adjusted by changing the HEX codes
 // data is read out in 5 columns according to 1s and 0s
@@ -189,17 +198,56 @@ void setup() {
   pinMode(clock_pin, OUTPUT);
   digitalWrite(data_pin, LOW);
   digitalWrite(clock_pin, HIGH);
+  
+  unsigned long tmp = millis();
+  Serial.println(tmp);
+
+  SetupTimer();
+  
+  tmp = millis();
+  Serial.println(tmp);
+
+}
+
+void SetupTimer()
+{
+  cli(); // Stop global interrupt
+  
+  TCCR1A = 0; // Timer/Counter Control Register 1 A
+  TCCR1B = 0; // Timer/Counter Control Register 1 B
+  
+  TCCR1B |= (1 << WGM12); // Configure Timer 1 for CTC mode
+  TIMSK1 |= (1 << OCIE1A); // Tell CTC to call interrupt routine in addition to setting CTC flag
+
+  // CS12  CS11  CS10  Description
+  //  0     0     1    clk / 1
+  //  0     1     0    clk / 8
+  //  0     1     1    clk / 64
+  //  1     0     0    clk / 256
+  //  1     1     0    clk / 1024
+  OCR1A = 125; // CTC Compare value
+  TCCR1B |= (1 << CS12); // CS10, CS11, CS12 bits control prescaler. 
+  // 1. With 16 MHz and clock divisor of 64, Timer 1 increments 62,500 times/sec
+  // 2. With CTC = 250, Timer 1 reaches CTC ~1000 times/sec
+  
+  sei(); // enable global interrupt again
 }
 
 void loop() {
+  //ShowWordForMillis('1', '2', '3', '4', '5', '6', '7', '8', 2000);
 
-  ShowWordForMillis('1','2','3','4','5','6','7','8', 2000);
+  unsigned long tmp = millis();
+  Serial.println(tmp);
   
-  for (char i=32; i+7<=126; i++) {
-    ShowWordForMillis (i, i+1, i+2, i+3, i+4, i+5, i+6, i+7, 1000);
-  }
+  ShowWordInterrupt("How are you?");
+  delay(5000);
+  Serial.println(display_last_scroll);
+  Serial.println(display_curr_column);
   
-  // writeText(" -hallo + ", 15, 2500); // alway precede with 4 spaces of ‘garbage’. These will be cut off
+  ShowWordInterrupt("Hello");
+  delay(2000);
+  Serial.println(display_last_scroll);
+  Serial.println(display_curr_column);
 }
 
 /*
@@ -269,7 +317,7 @@ void ShowWord(char c8, char c7, char c6, char c5, char c4, char c3, char c2, cha
     digitalWrite(column[i], HIGH);
     delayMicroseconds(2000);
     digitalWrite(column[i], LOW);
-    Serial.print(i);
+    //Serial.print(i);
   }
 
 }
@@ -313,5 +361,83 @@ byte getColumnByte(char c, int k)
   //Serial.print ( "char data = ");
   //Serial.println (chardata, BIN);
   return chardata;
+}
+
+void ShowWordInterrupt(String tmpString) {
+  display_length = tmpString.length();
+
+  for (int i=0; i<display_length; i++) {
+    display_chars[i] = tmpString.charAt(i);
+  }
+
+  display_curr_char = 0;
+  display_curr_column = 0;
+  display_last_scroll = millis();
+}
+
+
+// ISR(TIM1_COMPA_vect) // ATTiny84 format
+ISR(TIMER1_COMPA_vect)
+{
+  // Push out whatever is in the data for one level
+  RefreshDisplay();
+}
+
+
+void RefreshDisplay() {
+  boolean thisBit;
+  int display_prev_column = display_curr_column;
+
+  // Check if we need to scroll by 1 character
+  if ((millis() - display_last_scroll) > display_scroll_speed) {
+    display_curr_char = display_curr_char+1;
+
+    // Last character has scrolled off screen
+    if (display_curr_char >= display_length) {
+      // Wraparound to allow text to scroll in from the right
+      display_curr_char = -DISPLAY_CHARS;
+    }
+    
+    display_last_scroll = millis();
+  }
+
+  // Check if the current text string fits in the display
+  if (display_length <= DISPLAY_CHARS) {
+    // show all, no need to scroll
+    display_curr_char = 0;
+  } else {
+    // Use the current char
+  }
+
+  // Start with deactivating the previous column
+  digitalWrite(column[display_curr_column], LOW);
+  display_curr_column = (display_curr_column + 1) % 5; // Wrap around to 0
+
+
+  // temp variable to look up column for each char
+  byte thisCharData;
+
+  // Loop from (this character + DISPLAY_CHARS - 1) back to (this character) and display all of them
+  for (int thisChar = (display_curr_char+DISPLAY_CHARS-1); thisChar >= display_curr_char; thisChar--) {
+    
+    // Read the character data if it is part of the string
+    if (thisChar >= 0 && thisChar < display_length) {
+      thisCharData = getColumnByte(display_chars[thisChar], display_curr_column);
+    } else {
+      thisCharData = 0; // Not part of string, just display zero
+    }
+    
+    // write 7 values
+    for (int j = 1; j < 8; j++) {
+      digitalWrite(clock_pin, HIGH);
+      thisBit = (thisCharData & (1 << j));
+      digitalWrite(data_pin, thisBit); // first binary value character 8, reads for right to left, binary from left to right
+      digitalWrite(clock_pin, LOW);
+    }
+  }
+
+  // Activate this column until next ISR
+  digitalWrite(column[display_curr_column], HIGH);
+    
 }
 
