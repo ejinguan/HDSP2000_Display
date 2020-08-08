@@ -3,6 +3,22 @@
 // 1. https://www.freetronics.com.au/blogs/news/8494795-controlling-vintage-hdsp2000-displays-with-arduino#.XyOZC8BS-M-
 // 2. https://hackaday.io/project/167123-retro-time-dot-matrix-led-clocks 
 
+//Basic bit manipulation macros/defines
+#define bit_set(p, m) ((p) |= (m))
+#define bit_clear(p, m) ((p) &= ~(m))
+#define bit_flip(p, m)  ((p) ^= (m))
+#define bit_get(p, m) ((p) & (m))
+
+#define clock_set   bit_set(PORTB, 1 << PB1)
+#define clock_clear bit_clear(PORTB, 1 << PB1)
+#define data_set    bit_set(PORTB, 1 << PB0)
+#define data_clear  bit_clear(PORTB, 1 << PB0)
+#define data_write(n) (n)?(data_set):(data_clear)
+
+#define column_set(c)   bit_set(PORTD, 1 << (PD2 + c))
+#define column_clear(c) bit_clear(PORTD, 1 << (PD2 + c))
+#define column_write(c, n) (n)?(column_set(c)):(column_clear(c))
+
 struct CharMap
 {
   char c;
@@ -16,12 +32,13 @@ struct CharMap
 const int cmap_len = 95;
 
 #define DISPLAY_CHARS 8
+#define MAX_CHARS 32
 
-volatile char display_chars[16];            // The current character buffer to display
+volatile char display_chars[MAX_CHARS];     // The current character buffer to display
 volatile int  display_length = 0;           // The length of the character string
 volatile int  display_curr_char = 0;        // Current character displayed on the left
 volatile int  display_curr_column = 0;      // Current column flashed out, 0-4
-volatile unsigned long display_scroll_speed = 100;  // Millis to scroll the display
+volatile unsigned long display_scroll_speed = 200;  // Millis to scroll the display
 volatile unsigned long display_last_scroll = 0; // last millis() scrolled.
 
 // This is where the information on each character is
@@ -364,7 +381,8 @@ byte getColumnByte(char c, int k)
 }
 
 void ShowWordInterrupt(String tmpString) {
-  display_length = tmpString.length();
+  // Set to the smaller of input string or buffer size
+  display_length = min(tmpString.length(), MAX_CHARS);
 
   for (int i=0; i<display_length; i++) {
     display_chars[i] = tmpString.charAt(i);
@@ -410,7 +428,8 @@ void RefreshDisplay() {
   }
 
   // Start with deactivating the previous column
-  digitalWrite(column[display_curr_column], LOW);
+  //digitalWrite(column[display_curr_column], LOW);
+  column_write(display_curr_column, LOW);
   display_curr_column = (display_curr_column + 1) % 5; // Wrap around to 0
 
 
@@ -429,15 +448,19 @@ void RefreshDisplay() {
     
     // write 7 values
     for (int j = 1; j < 8; j++) {
-      digitalWrite(clock_pin, HIGH);
+      //digitalWrite(clock_pin, HIGH);
+      clock_set;
       thisBit = (thisCharData & (1 << j));
-      digitalWrite(data_pin, thisBit); // first binary value character 8, reads for right to left, binary from left to right
-      digitalWrite(clock_pin, LOW);
+      //digitalWrite(data_pin, thisBit); // first binary value character 8, reads for right to left, binary from left to right
+      data_write(thisBit);
+      //digitalWrite(clock_pin, LOW);
+      clock_clear;
     }
   }
 
   // Activate this column until next ISR
-  digitalWrite(column[display_curr_column], HIGH);
+  //digitalWrite(column[display_curr_column], HIGH);
+  column_write(display_curr_column, HIGH);
     
 }
 
